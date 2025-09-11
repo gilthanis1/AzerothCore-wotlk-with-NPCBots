@@ -5653,13 +5653,13 @@ void Spell::EffectTransmitted(SpellEffIndex effIndex)
                 switch (urand(0, 2))
                 {
                     case 0:
-                        lastSec =  3;
+                        lastSec = 17;
                         break;
                     case 1:
-                        lastSec =  7;
+                        lastSec = 17;
                         break;
                     case 2:
-                        lastSec = 13;
+                        lastSec = 17;
                         break;
                 }
 
