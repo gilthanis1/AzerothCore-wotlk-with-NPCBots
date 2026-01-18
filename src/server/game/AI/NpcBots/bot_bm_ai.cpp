@@ -40,10 +40,7 @@ enum BlademasterSpecial
     MIRROR_COST                             = 125 * 5
 };
 
-static const uint32 Blademaster_spells_support_arr[] =
-{ MIRROR_IMAGE_1, WINDWALK_1 };
-
-static const std::vector<uint32> Blademaster_spells_support(FROM_ARRAY(Blademaster_spells_support_arr));
+static const std::vector<uint32> Blademaster_spells_support{ MIRROR_IMAGE_1, WINDWALK_1 };
 
 class blademaster_bot : public CreatureScript
 {
@@ -93,7 +90,7 @@ public:
             protected:
                 bool Execute(uint64 /*e_time*/, uint32 /*p_time*/)
                 {
-                    (dynamic_cast<blademaster_botAI*>(_bot->GetAI()))->CriticalStrikeFinish(_targetGuid, _dinfo, _windwalk);
+                    (static_cast<blademaster_botAI*>(_bot->GetAI()))->CriticalStrikeFinish(_targetGuid, _dinfo, _windwalk);
 
                     if (_dinfo)
                         delete _dinfo;
@@ -116,7 +113,7 @@ public:
             protected:
                 bool Execute(uint64 /*e_time*/, uint32 /*p_time*/)
                 {
-                    (dynamic_cast<blademaster_botAI*>(_bot->GetAI()))->TerminateEvent();
+                    (static_cast<blademaster_botAI*>(_bot->GetAI()))->TerminateEvent();
                     return true;
                 }
 
@@ -133,7 +130,7 @@ public:
             protected:
                 bool Execute(uint64 /*e_time*/, uint32 /*p_time*/)
                 {
-                    (dynamic_cast<blademaster_botAI*>(_bot->GetAI()))->UnsummonAll(false);
+                    (static_cast<blademaster_botAI*>(_bot->GetAI()))->UnsummonAll(false);
 
                     return true;
                 }
@@ -151,7 +148,7 @@ public:
             protected:
                 bool Execute(uint64 /*e_time*/, uint32 /*p_time*/)
                 {
-                    (dynamic_cast<blademaster_botAI*>(_bot->GetAI()))->MirrorImageFinish();
+                    (static_cast<blademaster_botAI*>(_bot->GetAI()))->MirrorImageFinish();
 
                     return true;
                 }
@@ -169,7 +166,7 @@ public:
             protected:
                 bool Execute(uint64 /*e_time*/, uint32 /*p_time*/)
                 {
-                    (dynamic_cast<blademaster_botAI*>(_bot->GetAI()))->MirrorImageMid();
+                    (static_cast<blademaster_botAI*>(_bot->GetAI()))->MirrorImageMid();
 
                     return true;
                 }
@@ -519,7 +516,7 @@ public:
                     ASSERT(master->GetBotMgr()->AddBot(illusion));
 
                 illusion->SetCreator(master); //TempSummon* Map::SummonCreature()
-                (dynamic_cast<blademaster_botAI*>(illusion->GetAI()))->SetGUID(me->GetGUID());
+                (static_cast<blademaster_botAI*>(illusion->GetAI()))->SetGUID(me->GetGUID());
 
                 //copy visuals
                 //illusion->SetEntry(me->GetEntry());
@@ -815,10 +812,9 @@ public:
                     if (bot->IsNPCBot())
                         bot->ToCreature()->OnBotDespawn(me);
 
-            bot_ai::JustDied(u);
+            UnsummonAll(false);
 
-            if (!IsTempBot())
-                UnsummonAll(false);
+            bot_ai::JustDied(u);
         }
 
         void OnBotDespawn(Creature* summon) override
@@ -861,7 +857,7 @@ public:
             }
         }
 
-        void SetGUID(ObjectGuid/* const&*/ guid, int32 /*id*/ = 0) override
+        void SetGUID(ObjectGuid const& guid, int32 /*id*/ = 0) override
         {
             _summonerGUID = guid;
         }

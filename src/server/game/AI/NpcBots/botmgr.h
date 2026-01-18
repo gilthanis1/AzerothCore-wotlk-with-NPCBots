@@ -95,6 +95,26 @@ enum BotAttackAngle
     BOT_ATTACK_ANGLE_END                = BOT_ATTACK_ANGLE_AVOID_FRONTAL_AOE
 };
 
+enum SharedOwnerOptions : uint32
+{
+    SHARED_OWNER_ENABLE                 = 1,
+    SHARED_OWNER_EQUIPMENT              = 2,
+    SHARED_OWNER_ADD_OWNERS             = 3,
+    SHARED_OWNER_REMOVE_OWNERS          = 4,
+
+    MAX_SHARED_OWNER_OPTIONS
+};
+enum SharedOwnerOptionMask : uint32
+{
+    SHARED_OWNER_OPTION_MASK_ENABLE         = (1<<(SHARED_OWNER_ENABLE-1)),
+    SHARED_OWNER_OPTION_MASK_EQUIPMENT      = (1<<(SHARED_OWNER_EQUIPMENT-1)),
+    SHARED_OWNER_OPTION_MASK_ADD_OWNERS     = (1<<(SHARED_OWNER_ADD_OWNERS-1)),
+    SHARED_OWNER_OPTION_MASK_REMOVE_OWNERS  = (1<<(SHARED_OWNER_REMOVE_OWNERS-1)),
+
+    SHARED_OWNER_OPTION_MASK_MANAGE_OWNERS  = SHARED_OWNER_OPTION_MASK_ADD_OWNERS | SHARED_OWNER_OPTION_MASK_REMOVE_OWNERS,
+    SHARED_OWNER_OPTION_MASK_ALL            = (1<<(MAX_SHARED_OWNER_OPTIONS-1)) - 1
+};
+
 typedef std::unordered_map<ObjectGuid /*guid*/, Creature* /*bot*/> BotMap;
 template<typename U>
 using BotBrackets = std::array<U, BRACKETS_COUNT>;
@@ -109,8 +129,12 @@ class AC_GAME_API BotMgr
         using delayed_teleport_mutex_type = std::mutex;
         using delayed_teleport_lock_type = std::unique_lock<delayed_teleport_mutex_type>;
 
-        BotMgr(Player* const master);
+        explicit BotMgr(Player* const master);
         ~BotMgr();
+        BotMgr(BotMgr const&) = delete;
+        BotMgr(BotMgr&&) = delete;
+        BotMgr& operator=(BotMgr const&) = delete;
+        BotMgr& operator=(BotMgr&&) = delete;
 
         Player* GetOwner() const { return _owner; }
 
@@ -148,8 +172,10 @@ class AC_GAME_API BotMgr
         static bool IsBotHKEnabled();
         static bool IsBotHKMessageEnabled();
         static bool IsBotHKAchievementsEnabled();
+        static bool IsSharedOwnerOptionEnabled(SharedOwnerOptionMask options);
         static uint8 GetMaxClassBots();
         static uint8 GetMaxAccountBots();
+        static uint8 GetMaxSharedOwners();
         static uint32 GetGearBankCapacity();
         static uint32 GetGearBankEquipmentSetsCount();
         static uint8 GetHealTargetIconFlags();
@@ -371,7 +397,6 @@ class AC_GAME_API BotMgr
 
         Player* const _owner;
         BotMap _bots;
-        std::list<ObjectGuid> _removeList;
         std::list<std::pair<ObjectGuid, BotRemoveType>> _delayedRemoveList;
         DPSTracker* const _dpstracker;
         NpcBotMgrData* _data;

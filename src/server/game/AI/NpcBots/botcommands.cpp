@@ -451,10 +451,13 @@ private:
 
     struct BotInfo
     {
-        explicit BotInfo(uint32 Id, std::string&& Name, uint8 Race) : id(Id), name(std::move(Name)), race(Race) {}
+        BotInfo(uint32 Id, std::string&& Name, uint8 Race) : id(Id), name(std::move(Name)), race(Race) {}
         uint32 id;
         std::string name;
         uint8 race;
+
+        inline constexpr bool operator==(BotInfo const& other) const noexcept { return id == other.id; }
+        inline constexpr std::strong_ordering operator<=>(BotInfo const& other) const noexcept { return id <=> other.id; }
     };
 
     static char const* get_race_name(uint8 race)
@@ -1079,7 +1082,7 @@ public:
         {
             if (!wps_relinks.empty())
             {
-                std::sort(wps_relinks.begin(), wps_relinks.end(), [](WanderNodeLink const* wlp1, WanderNodeLink const* wlp2) { return wlp1->Id() < wlp2->Id(); });
+                std::ranges::sort(wps_relinks, [](WanderNodeLink const* wlp1, WanderNodeLink const* wlp2) { return wlp1->Id() < wlp2->Id(); });
                 for (WanderNodeLink const* wlp : wps_relinks)
                 {
                     handler->PSendSysMessage("Adding link {}->{} (w={})...", wp->GetWPId(), wlp->Id(), wlp->weight);
@@ -1717,7 +1720,7 @@ public:
         std::vector<WanderNode*> wander_nodes_copy;
         wander_nodes_copy.reserve(WanderNode::GetAllWPsCount());
         WanderNode::DoForAllWPs([&wander_nodes_copy](WanderNode* wp) { wander_nodes_copy.push_back(wp); });
-        std::sort(std::begin(wander_nodes_copy), std::end(wander_nodes_copy), [](WanderNode const* wp1, WanderNode const* wp2) { return wp1->GetWPId() < wp2->GetWPId(); });
+        std::ranges::sort(wander_nodes_copy, [](WanderNode const* wp1, WanderNode const* wp2) { return wp1->GetWPId() < wp2->GetWPId(); });
 
         uint32 startid = *start_id;
         uint32 endid = end_id.value_or(wander_nodes_copy.back()->GetWPId());
@@ -2044,7 +2047,7 @@ public:
         if (file_str->find('.') == std::string::npos)
             *file_str += ".sql";
 
-        switch (NPCBotsDump().Load(*file_str))
+        switch (NPCBotsDump{}.Load(*file_str))
         {
             case BOT_DUMP_SUCCESS:
                 handler->SendSysMessage("Import successful.");
@@ -2085,7 +2088,7 @@ public:
         if (file_str->find('.') == std::string::npos)
             *file_str += ".sql";
 
-        switch (NPCBotsDump().Write(*file_str))
+        switch (NPCBotsDump{}.Write(*file_str))
         {
             case BOT_DUMP_SUCCESS:
                 handler->SendSysMessage("Export successful.");
@@ -2922,7 +2925,7 @@ public:
             return false;
         };
 
-        static auto return_success = [&](ChatHandler* chandler, Variant<std::string, uint32> name_or_count) -> bool {
+        static auto return_success = [=](ChatHandler* chandler, Variant<std::string, uint32> name_or_count) -> bool {
             if (name_or_count.holds_alternative<uint32>())
                 chandler->PSendSysMessage("Marked send point {} for {} bot(s)", *point_id, name_or_count.get<uint32>());
             else
@@ -2983,7 +2986,7 @@ public:
             return false;
         };
 
-        static auto return_success = [&](ChatHandler* chandler, Variant<std::string, uint32> name_or_count) -> bool {
+        static auto return_success = [=](ChatHandler* chandler, Variant<std::string, uint32> name_or_count) -> bool {
             if (name_or_count.holds_alternative<uint32>())
                 chandler->PSendSysMessage("Moving {} bot(s) to point {}...", name_or_count.get<uint32>(), *point_id);
             else
@@ -3075,7 +3078,7 @@ public:
         std::vector<ObjectGuid> botvec;
         BotDataMgr::GetNPCBotGuidsByOwner(botvec, owner->GetGUID());
         if (owner->HaveBot())
-            botvec.erase(std::remove_if(botvec.begin(), botvec.end(), [=](ObjectGuid botguid) { return owner->GetBotMgr()->GetBot(botguid); }), botvec.end());
+            std::erase_if(botvec, [=](ObjectGuid botguid) { return owner->GetBotMgr()->GetBot(botguid); });
 
         uint32 recalled_count = 0;
         for (ObjectGuid botguid : botvec)
@@ -3271,8 +3274,13 @@ public:
         }
 
         BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_OWNER, &guidlow);
-        bot->GetBotAI()->ReinitOwner();
-        //bot->GetBotAI()->Reset();
+        NpcBotData const* bot_data = BotDataMgr::SelectNpcBotData(bot->GetEntry());
+        if (bot_data->shared_owners.contains(guidlow))
+        {
+            NpcBotData::SharedOwnersContainer shared_owners_new = bot_data->shared_owners; //copy
+            shared_owners_new.erase(guidlow);
+            BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_SHARED_OWNERS, &shared_owners_new);
+        }
 
         handler->PSendSysMessage("{}'s new owner is {} (guidlow: {})", bot->GetName(), characterName, guidlow);
         return true;
@@ -3412,7 +3420,7 @@ public:
             return false;
         }
 
-        std::sort(botlist.begin(), botlist.end(), [](BotInfo const& bi1, BotInfo const& bi2) { return bi1.id < bi2.id; });
+        std::ranges::sort(botlist);
 
         for (BotList::const_iterator itr = botlist.begin(); itr != botlist.end(); ++itr)
         {
@@ -3512,6 +3520,8 @@ public:
         {
             uint32 newOwner = 0;
             BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_OWNER, &newOwner);
+            NpcBotData::SharedOwnersContainer sharedOwners{};
+            BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_SHARED_OWNERS, &sharedOwners);
 
             if (Group* gr = bot->GetBotGroup())
                 gr->RemoveMember(bot->GetGUID());
@@ -3962,7 +3972,7 @@ public:
 
     static bool HandleNpcBotSpawnedCommandImpl(ChatHandler* handler, Optional<std::string> area_str, Optional<std::string> class_str, Optional<uint32> level_min, Optional<uint32> level_max, bool is_free)
     {
-        std::unique_lock<std::shared_mutex> lock(*BotDataMgr::GetLock());
+        std::shared_lock<std::shared_mutex> lock(*BotDataMgr::GetLock());
         NpcBotRegistry const& all_bots = BotDataMgr::GetExistingNPCBots();
         std::vector<NpcBotRegistry::value_type> found_bots;
         found_bots.reserve(all_bots.size());
@@ -4058,7 +4068,7 @@ public:
             if ((1 << bclass) & ALL_BOT_CLASSES_MASK)
                 GetBotClassNameAndColor(bclass, dummy, bot_class_names[bclass]);
 
-        std::unique_lock<std::shared_mutex> lock(*BotDataMgr::GetLock());
+        std::shared_lock<std::shared_mutex> lock(*BotDataMgr::GetLock());
         NpcBotRegistry const& all_bots = BotDataMgr::GetExistingNPCBots();
         std::vector<NpcBotRegistry::value_type> found_bots;
         found_bots.reserve(all_bots.size());
@@ -4500,7 +4510,7 @@ public:
             handler->SetSentErrorMessage(true);
             return false;
         }
-        if (BotDataMgr::GetOwnedBotsCount(master_guid) == 0)
+        if (BotDataMgr::GetOwnedBotsCount(master_guid, 0, true) == 0)
         {
             handler->PSendSysMessage("{} ({}) has no NpcBots!", master_name, master_guid.GetCounter());
             handler->SetSentErrorMessage(true);
@@ -4508,16 +4518,12 @@ public:
         }
 
         std::vector<ObjectGuid> guidvec;
-        BotDataMgr::GetNPCBotGuidsByOwner(guidvec, master_guid);
+        BotDataMgr::GetNPCBotGuidsByOwner(guidvec, master_guid, true);
         Player* master = ObjectAccessor::FindConnectedPlayer(master_guid);
         BotMap const* map = master ? master->GetBotMgr()->GetBotMap() : nullptr;
         uint32 map_size = map ? uint32(map->size()) : 0u;
         if (map)
-        {
-            guidvec.erase(std::remove_if(std::begin(guidvec), std::end(guidvec),
-                [bmap = map](ObjectGuid guid) { return bmap->find(guid) != bmap->end(); }
-            ), std::end(guidvec));
-        }
+            std::erase_if(guidvec, [=](ObjectGuid guid) { return map->find(guid) != map->end(); });
 
         handler->PSendSysMessage("Listing NpcBots for {}, guid {}{}:", master_name, master_guid.GetCounter(), !master ? " (offline)" : "");
         handler->PSendSysMessage("Owned NpcBots: {} (active: {})", uint32(guidvec.size()) + map_size, map_size);
@@ -4793,25 +4799,34 @@ public:
 
     static bool HandleNpcBotCommandReBindCommand(ChatHandler* handler, Optional<std::vector<std::string>> names)
     {
-        static auto return_syntax = [](ChatHandler* chandler) -> bool {
-            chandler->SendSysMessage(".npcbot command rebind [#names...]");
-            chandler->SendSysMessage("Re-binds selected/named unbound npcbot");
-            chandler->SetSentErrorMessage(true);
+        auto return_syntax = [=] {
+            handler->SendSysMessage(".npcbot command rebind [#names...]");
+            handler->SendSysMessage("Re-binds selected/named unbound npcbot");
+            handler->SetSentErrorMessage(true);
             return false;
         };
 
-        static auto return_success = [](ChatHandler* chandler, Variant<std::string, uint32> name_or_count) -> bool {
+        auto return_success = [=](Variant<std::string_view, uint32> name_or_count) {
             if (name_or_count.holds_alternative<uint32>())
-                chandler->PSendSysMessage("Successfully re-bound {} bot(s)", name_or_count.get<uint32>());
+                handler->PSendSysMessage("Successfully re-bound {} bot(s)", name_or_count.get<uint32>());
             else
-                chandler->PSendSysMessage("Successfully re-bound {}", name_or_count.get<std::string>());
+                handler->PSendSysMessage("Successfully re-bound {}", name_or_count.get<std::string_view>());
             return true;
+        };
+
+        auto return_fail = [=](BotAddResult result, Variant<std::string_view, uint32> name_or_count) {
+            if (name_or_count.holds_alternative<uint32>())
+                handler->PSendSysMessage("Unable to re-bind any of {} bots!", name_or_count.get<uint32>());
+            else
+                handler->PSendSysMessage("Failed to re-bind {}, result was {}!", name_or_count.get<std::string_view>(), uint32(result));
+            handler->SetSentErrorMessage(true);
+            return false;
         };
 
         Player const* owner = handler->GetSession()->GetPlayer();
 
-        if (!owner->HaveBot() && BotDataMgr::GetOwnedBotsCount(owner->GetGUID()) == 0)
-            return return_syntax(handler);
+        if (!owner->HaveBot() && BotDataMgr::GetOwnedBotsCount(owner->GetGUID(), 0, true) == 0)
+            return return_syntax();
 
         BotMgr* mgr = owner->GetBotMgr();
 
@@ -4819,17 +4834,14 @@ public:
         {
             Creature const* bot = handler->getSelectedCreature();
             if (bot && bot->IsNPCBot() && !bot->IsTempBot() && !mgr->GetBot(bot->GetGUID()) && bot->GetBotAI()->HasBotCommandState(BOT_COMMAND_UNBIND) &&
-                BotDataMgr::SelectNpcBotData(bot->GetEntry())->owner == owner->GetGUID().GetCounter())
+                bot->GetBotAI()->HasOwner(owner->GetGUID().GetCounter()))
             {
-                if (mgr->RebindBot(const_cast<Creature*>(bot)) != BOT_ADD_SUCCESS)
-                {
-                    handler->PSendSysMessage("Failed to re-bind {} for some reason!", bot->GetName());
-                    handler->SetSentErrorMessage(true);
-                    return false;
-                }
-                return return_success(handler, { bot->GetName() });
+                if (BotAddResult res = mgr->RebindBot(const_cast<Creature*>(bot)); res != BOT_ADD_SUCCESS)
+                    return return_fail(res, { bot->GetName() });
+
+                return return_success({ bot->GetName() });
             }
-            return return_syntax(handler);
+            return return_syntax();
         }
 
         uint32 count = 0;
@@ -4846,12 +4858,11 @@ public:
 
             Creature const* bot = BotDataMgr::FindBot(name, owner->GetSession()->GetSessionDbLocaleIndex(), &bot_ids);
             if (bot && bot->IsNPCBot() && !bot->IsTempBot() && !mgr->GetBot(bot->GetGUID()) && bot->GetBotAI()->HasBotCommandState(BOT_COMMAND_UNBIND) &&
-                BotDataMgr::SelectNpcBotData(bot->GetEntry())->owner == owner->GetGUID().GetCounter())
+                bot->GetBotAI()->HasOwner(owner->GetGUID().GetCounter()))
             {
-                if (mgr->RebindBot(const_cast<Creature*>(bot)) != BOT_ADD_SUCCESS)
+                if (BotAddResult res = mgr->RebindBot(const_cast<Creature*>(bot)); res != BOT_ADD_SUCCESS)
                 {
-                    handler->PSendSysMessage("Failed to re-bind {} for some reason!", name);
-                    handler->SetSentErrorMessage(true);
+                    return_fail(res, { name });
                     continue;
                 }
                 ++count;
@@ -4859,13 +4870,9 @@ public:
         }
 
         if (count == 0)
-        {
-            handler->PSendSysMessage("Unable to re-bind any of {} bots!", uint32(names->size()));
-            handler->SetSentErrorMessage(true);
-            return false;
-        }
+            return return_fail({}, { uint32(names->size()) });
 
-        return return_success(handler, { count });
+        return return_success({ count });
     }
 
     static bool HandleNpcBotCommandUnBindCommand(ChatHandler* handler, Optional<std::vector<std::string>> names)
@@ -5052,7 +5059,8 @@ public:
 
         ObjectGuid::LowType guidlow = owner->GetGUID().GetCounter();
         BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_OWNER, &guidlow);
-        bot->GetBotAI()->ReinitOwner();
+        NpcBotData::SharedOwnersContainer sharedOwners{};
+        BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_SHARED_OWNERS, &sharedOwners);
 
         if (owner->GetBotMgr()->AddBot(bot) == BOT_ADD_SUCCESS)
         {
