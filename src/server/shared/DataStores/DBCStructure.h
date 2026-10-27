@@ -630,6 +630,33 @@ struct CharStartOutfitEntry
     //int32 ItemInventorySlot[MAX_OUTFIT_ITEMS];            // 53-76 not required at server side
 };
 
+enum CharSectionFlags
+{
+    SECTION_FLAG_PLAYER         = 0x01,
+    SECTION_FLAG_DEATH_KNIGHT   = 0x04
+};
+
+enum CharSectionType
+{
+    SECTION_TYPE_SKIN           = 0,
+    SECTION_TYPE_FACE           = 1,
+    SECTION_TYPE_FACIAL_HAIR    = 2,
+    SECTION_TYPE_HAIR           = 3,
+    SECTION_TYPE_UNDERWEAR      = 4
+};
+
+struct CharSectionsEntry
+{
+    //uint32 ID;                                            // 0
+    uint32 RaceID;                                          // 1
+    uint32 SexID;                                           // 2
+    uint32 BaseSection;                                     // 3, CharSectionType
+    //char const* TextureName[3];                           // 4-6
+    uint32 Flags;                                           // 7, CharSectionFlags
+    uint32 VariationIndex;                                  // 8
+    uint32 ColorIndex;                                      // 9
+};
+
 struct CharTitlesEntry
 {
     uint32  ID;                                             // 0, title ids, for example in Quest::GetCharTitleId()
@@ -689,8 +716,8 @@ struct ChrRacesEntry
     uint32      TeamID;                                     // 7 (7-Alliance 1-Horde)
     // 8-11 unused
     uint32      CinematicSequence;                          // 12 id from CinematicSequences.dbc
-    //uint32    alliance;                                   // 13 faction (0 alliance, 1 horde, 2 not available?)
-    char const*       name[16];                             // 14-29 used for DBC language detection/selection
+    uint32      alliance;                                   // 13 faction (0 alliance, 1 horde, 2 not available?)
+    char const* name[16];                                   // 14-29 used for DBC language detection/selection
     // 30 string flags, unused
     //char const*       nameFemale[16];                     // 31-46, if different from base (male) case
     // 47 string flags, unused
@@ -903,6 +930,15 @@ struct EmotesTextEntry
 {
     uint32  Id;
     uint32  textid;
+};
+
+struct EmotesTextSoundEntry
+{
+    uint32 Id;                                              // 0
+    uint32 EmotesTextId;                                    // 1
+    uint32 RaceId;                                          // 2
+    uint32 SexId;                                           // 3, 0 male / 1 female
+    uint32 SoundId;                                         // 4
 };
 
 struct FactionEntry

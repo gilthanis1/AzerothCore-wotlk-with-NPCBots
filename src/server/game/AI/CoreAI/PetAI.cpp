@@ -77,7 +77,7 @@ void PetAI::_stopAttack()
         me->GetMotionMaster()->Clear();
         me->GetMotionMaster()->MoveIdle();
         me->CombatStop();
-        me->getHostileRefMgr().deleteReferences();
+        me->GetThreatMgr().RemoveMeFromThreatLists();
         return;
     }
 
@@ -174,10 +174,19 @@ void PetAI::UpdateAI(uint32 diff)
             return;
         }
 
-        // Check before attacking to prevent pets from leaving stay position
-        if (me->GetCharmInfo()->HasCommandState(COMMAND_STAY))
+        CharmInfo* charmInfo = me->GetCharmInfo();
+        // Deferred hostile casts pause their chase at cast range. Resume once movement cannot interrupt the cast.
+        if (!me->HasReactState(REACT_PASSIVE) && charmInfo->HasCommandState(COMMAND_FOLLOW) &&
+            charmInfo->IsCommandAttack() && charmInfo->IsAtStay() && !me->IsMovementPreventedByCasting())
         {
-            if (me->GetCharmInfo()->IsCommandAttack() || (me->GetCharmInfo()->IsAtStay() && me->IsWithinMeleeRange(me->GetVictim())))
+            if (StartChase(me->GetVictim()))
+                charmInfo->SetIsAtStay(false);
+        }
+
+        // Check before attacking to prevent pets from leaving stay position
+        if (charmInfo->HasCommandState(COMMAND_STAY))
+        {
+            if (charmInfo->IsCommandAttack() || (charmInfo->IsAtStay() && me->IsWithinMeleeRange(me->GetVictim())))
                 _doMeleeAttack();
         }
         else
@@ -350,6 +359,12 @@ void PetAI::UpdateAI(uint32 diff)
             me->AddSpellCooldown(spell->m_spellInfo->Id, 0, 0);
 
             spell->prepare(&targets);
+
+            // Stop the current spline before the next movement update can interrupt a stationary channel.
+            if (Pet* controlledPet = me->ToPet())
+                if (spell->m_spellInfo->IsChanneled() && !spell->m_spellInfo->IsActionAllowedChannel()
+                    && controlledPet->IsMovementPreventedByCasting())
+                    controlledPet->StopMoving();
         }
 
         // deleted cached Spell objects
@@ -494,11 +509,11 @@ Unit* PetAI::SelectNextTarget(bool allowAutoSelect) const
     // Check pet's attackers first to prevent dragging mobs back to owner
     if (me->HasTauntAura())
     {
-        const Unit::AuraEffectList& tauntAuras = me->GetAuraEffectsByType(SPELL_AURA_MOD_TAUNT);
+        Unit::AuraEffectList const& tauntAuras = me->GetAuraEffectsByType(SPELL_AURA_MOD_TAUNT);
         if (!tauntAuras.empty())
             for (Unit::AuraEffectList::const_reverse_iterator itr = tauntAuras.rbegin(); itr != tauntAuras.rend(); ++itr)
                 if (Unit* caster = (*itr)->GetCaster())
-                    if (me->CanCreatureAttack(caster) && !caster->HasAuraTypeWithCaster(SPELL_AURA_IGNORED, me->GetGUID()))
+                    if (me->CanCreatureAttack(caster) && !caster->HasAuraTypeWithCaster(SPELL_AURA_MOD_DETAUNT, me->GetGUID()))
                         return caster;
     }
 
@@ -632,12 +647,7 @@ void PetAI::DoAttack(Unit* target, bool chase)
             ClearCharmInfoFlags();
             me->GetCharmInfo()->SetIsCommandAttack(oldCmdAttack); // For passive pets commanded to attack so they will use spells
 
-            if (_canMeleeAttack())
-            {
-                float angle = combatRange == 0.f && !target->IsPlayer() && !target->IsPet() ? float(M_PI) : 0.f;
-                float tolerance = combatRange == 0.f ? float(M_PI_4) : float(M_PI * 2);
-                me->GetMotionMaster()->MoveChase(target, ChaseRange(0.f, combatRange), ChaseAngle(angle, tolerance));
-            }
+            StartChase(target);
         }
         else // (Stay && ((Aggressive || Defensive) && In Melee Range)))
         {
@@ -648,6 +658,19 @@ void PetAI::DoAttack(Unit* target, bool chase)
             me->GetMotionMaster()->MoveIdle();
         }
     }
+}
+
+bool PetAI::StartChase(Unit* target)
+{
+    if (!target || target == me || me->HasUnitFlag(UNIT_FLAG_DISABLE_MOVE) || !_canMeleeAttack())
+        return false;
+
+    std::optional<ChaseAngle> chaseAngle;
+    if (combatRange == 0.f && !target->IsPlayer() && !target->IsPet())
+        chaseAngle.emplace(float(M_PI), float(M_PI_4));
+
+    me->GetMotionMaster()->MoveChase(target, ChaseRange(0.f, combatRange), chaseAngle);
+    return true;
 }
 
 void PetAI::MovementInform(uint32 moveType, uint32 data)
@@ -722,7 +745,7 @@ bool PetAI::CanAttack(Unit* target, SpellInfo const* spellInfo)
         return me->GetCharmInfo()->IsCommandAttack();
 
     // CC - mobs under crowd control can be attacked if owner commanded
-    if (target->HasBreakableByDamageCrowdControlAura() && (!spellInfo || !spellInfo->HasAttribute(SPELL_ATTR4_REACTIVE_DAMAGE_PROC)))
+    if (target->HasBreakableByDamageCrowdControlAura() && (!spellInfo || !spellInfo->HasAttribute(SPELL_ATTR4_DAMAGE_DOESNT_BREAK_AURAS)))
         return me->GetCharmInfo()->IsCommandAttack();
 
     // Returning - pets ignore attacks only if owner clicked follow
@@ -744,10 +767,15 @@ bool PetAI::CanAttack(Unit* target, SpellInfo const* spellInfo)
 
         // Check if our owner selected this target and clicked "attack"
         Unit* ownerTarget = nullptr;
-        if (Player* owner = me->GetCharmerOrOwner()->ToPlayer())
-            ownerTarget = owner->GetSelectedUnit();
-        else
-            ownerTarget = me->GetCharmerOrOwner()->GetVictim();
+        Unit* charmerOrOwner = me->GetCharmerOrOwner();
+
+        if (charmerOrOwner)
+        {
+            if (Player* owner = charmerOrOwner->ToPlayer())
+                ownerTarget = owner->GetSelectedUnit();
+            else
+                ownerTarget = charmerOrOwner->GetVictim();
+        }
 
         if (ownerTarget && me->GetCharmInfo()->IsCommandAttack())
             return (target->GetGUID() == ownerTarget->GetGUID());

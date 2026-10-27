@@ -384,6 +384,7 @@ public:
     //
     // methods useable during all spell handling phases
     Unit* GetCaster();
+    GameObject* GetGObjCaster();
     Unit* GetOriginalCaster();
     SpellInfo const* GetSpellInfo();
     SpellValue const* GetSpellValue();
@@ -499,6 +500,7 @@ enum AuraScriptHookType
     AURA_SCRIPT_HOOK_AFTER_DISPEL,
     // Spell Proc Hooks
     AURA_SCRIPT_HOOK_CHECK_PROC,
+    AURA_SCRIPT_HOOK_CHECK_EFFECT_PROC,
     AURA_SCRIPT_HOOK_AFTER_CHECK_PROC,
     AURA_SCRIPT_HOOK_PREPARE_PROC,
     AURA_SCRIPT_HOOK_PROC,
@@ -530,6 +532,7 @@ public:
         typedef void(CLASSNAME::*AuraEffectAbsorbFnType)(AuraEffect*, DamageInfo &, uint32 &); \
         typedef void(CLASSNAME::*AuraEffectSplitFnType)(AuraEffect*, DamageInfo &, uint32 &); \
         typedef bool(CLASSNAME::*AuraCheckProcFnType)(ProcEventInfo&); \
+        typedef bool(CLASSNAME::*AuraCheckEffectProcFnType)(AuraEffect const*, ProcEventInfo&); \
         typedef bool(CLASSNAME::*AuraAfterCheckProcFnType)(ProcEventInfo&, bool); \
         typedef void(CLASSNAME::*AuraProcFnType)(ProcEventInfo&); \
         typedef void(CLASSNAME::*AuraEffectProcFnType)(AuraEffect const*, ProcEventInfo&); \
@@ -640,6 +643,14 @@ public:
     private:
         AuraCheckProcFnType _HandlerScript;
     };
+    class CheckEffectProcHandler : public EffectBase
+    {
+    public:
+        CheckEffectProcHandler(AuraCheckEffectProcFnType handlerScript, uint8 effIndex, uint16 effName);
+        bool Call(AuraScript* auraScript, AuraEffect const* aurEff, ProcEventInfo& eventInfo);
+    private:
+        AuraCheckEffectProcFnType _HandlerScript;
+    };
     class AfterCheckProcHandler
     {
     public:
@@ -678,6 +689,7 @@ public:
         class EffectManaShieldFunction : public AuraScript::EffectManaShieldHandler { public: EffectManaShieldFunction(AuraEffectAbsorbFnType _pEffectHandlerScript, uint8 _effIndex) : AuraScript::EffectManaShieldHandler((AuraScript::AuraEffectAbsorbFnType)_pEffectHandlerScript, _effIndex) {} }; \
         class EffectSplitFunction : public AuraScript::EffectSplitHandler { public: EffectSplitFunction(AuraEffectSplitFnType _pEffectHandlerScript, uint8 _effIndex) : AuraScript::EffectSplitHandler((AuraScript::AuraEffectSplitFnType)_pEffectHandlerScript, _effIndex) {} }; \
         class CheckProcHandlerFunction : public AuraScript::CheckProcHandler { public: CheckProcHandlerFunction(AuraCheckProcFnType handlerScript) : AuraScript::CheckProcHandler((AuraScript::AuraCheckProcFnType)handlerScript) {} }; \
+        class CheckEffectProcHandlerFunction : public AuraScript::CheckEffectProcHandler { public: CheckEffectProcHandlerFunction(AuraCheckEffectProcFnType handlerScript, uint8 effIndex, uint16 effName) : AuraScript::CheckEffectProcHandler((AuraScript::AuraCheckEffectProcFnType)handlerScript, effIndex, effName) {} }; \
         class AfterCheckProcHandlerFunction : public AuraScript::AfterCheckProcHandler { public: AfterCheckProcHandlerFunction(AuraAfterCheckProcFnType handlerScript) : AuraScript::AfterCheckProcHandler((AuraScript::AuraAfterCheckProcFnType)handlerScript) {} }; \
         class AuraProcHandlerFunction : public AuraScript::AuraProcHandler { public: AuraProcHandlerFunction(AuraProcFnType handlerScript) : AuraScript::AuraProcHandler((AuraScript::AuraProcFnType)handlerScript) {} }; \
         class EffectProcHandlerFunction : public AuraScript::EffectProcHandler { public: EffectProcHandlerFunction(AuraEffectProcFnType effectHandlerScript, uint8 effIndex, uint16 effName) : AuraScript::EffectProcHandler((AuraScript::AuraEffectProcFnType)effectHandlerScript, effIndex, effName) {} }; \
@@ -812,10 +824,19 @@ public:
 #define AuraEffectSplitFn(F, I) EffectSplitFunction(&F, I)
 
     // executed when aura checks if it can proc
+    // do not use this hook for triggering spellcasts/removing auras etc - runs mid proc-iteration and may be unsafe
     // example: DoCheckProc += AuraCheckProcFn(class::function);
     // where function is: bool function (ProcEventInfo& eventInfo);
     HookList<CheckProcHandler> DoCheckProc;
 #define AuraCheckProcFn(F) CheckProcHandlerFunction(&F)
+
+    // executed when aura effect checks if it can proc the aura
+    // do not use this hook for triggering spellcasts/removing auras etc - runs mid proc-iteration and may be unsafe
+    // example: DoCheckEffectProc += AuraCheckEffectProcFn(class::function, EffectIndexSpecifier, EffectAuraNameSpecifier);
+    // where function is: bool function (AuraEffect const* aurEff, ProcEventInfo& eventInfo);
+    HookList<CheckEffectProcHandler> DoCheckEffectProc;
+#define AuraCheckEffectProcFn(F, I, N) CheckEffectProcHandlerFunction(&F, I, N)
+
     // executed when aura checks if it can proc
     // example: DoAfterCheckProc += AuraCheckProcFn(class::function);
     // where function is: bool function (ProcEventInfo& eventInfo);
@@ -860,8 +881,10 @@ public:
 
     // returns guid of object which casted the aura (m_originalCaster of the Spell class)
     ObjectGuid GetCasterGUID() const;
-    // returns unit which casted the aura or nullptr if not avalible (caster logged out for example)
+    // returns object which casted the aura
     Unit* GetCaster() const;
+    // returns gameobject which casted the aura or nullptr if not available (caster logged out for example)
+    GameObject* GetGObjCaster() const;
     // returns object on which aura was casted, target for non-area auras, area aura source for area auras
     WorldObject* GetOwner() const;
     // returns owner if it's unit or unit derived object, nullptr otherwise (only for persistent area auras nullptr is returned)
@@ -870,7 +893,7 @@ public:
     DynamicObject* GetDynobjOwner() const;
 
     // removes aura with remove mode (see AuraRemoveMode enum)
-    void Remove(uint32 removeMode = 0);
+    void Remove(AuraRemoveMode removeMode = AURA_REMOVE_BY_DEFAULT);
     // returns aura object of script
     Aura* GetAura() const;
 

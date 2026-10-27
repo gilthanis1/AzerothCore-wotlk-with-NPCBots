@@ -50,7 +50,10 @@ enum Data : uint32
 
     // Spells
     SPELL_TWILIGHT_SHIFT            = 57620,
+    SPELL_TWILIGHT_TORMENT_VESPERON = 57935,
+    SPELL_SARTHARION_PYROBUFFET_TRIGGER = 57557,
     SPELL_TWILIGHT_TORMENT_SARTHARION = 58835,
+    SPELL_FADE_ARMOR                = 60708,
 };
 
 enum OSActions
@@ -58,6 +61,9 @@ enum OSActions
     // Portal
     ACTION_CLEAR_PORTAL               = -1,
     ACTION_ADD_PORTAL                 = -2,
+
+    // Dragon patrol
+    ACTION_START_PATROL               = -3,
 };
 
 template <class AI, class T>
@@ -65,5 +71,7 @@ inline AI* GetObsidianSanctumAI(T* obj)
 {
     return GetInstanceAI<AI>(obj, ObsidianSanctumScriptName);
 }
+
+#define RegisterObsidianSanctumCreatureAI(ai_name) RegisterCreatureAIWithFactory(ai_name, GetObsidianSanctumAI)
 
 #endif

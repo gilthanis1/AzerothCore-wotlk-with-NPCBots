@@ -73,14 +73,14 @@ enum WorldTimers
 enum BillingPlanFlags
 {
     SESSION_NONE            = 0x00,
-    SESSION_UNUSED          = 0x01,
+    SESSION_UNUSED          = 0x01, // Unk, NYI
     SESSION_RECURRING_BILL  = 0x02,
     SESSION_FREE_TRIAL      = 0x04,
-    SESSION_IGR             = 0x08,
-    SESSION_USAGE           = 0x10,
-    SESSION_TIME_MIXTURE    = 0x20,
-    SESSION_RESTRICTED      = 0x40,
-    SESSION_ENABLE_CAIS     = 0x80,
+    SESSION_IGR             = 0x08, // Internet Game Room
+    SESSION_USAGE           = 0x10, // Unk, NYI
+    SESSION_TIME_MIXTURE    = 0x20, // Unk, NYI
+    SESSION_RESTRICTED      = 0x40, // Unk, NYI
+    SESSION_ENABLE_CAIS     = 0x80, // Account play time limit related for China
 };
 
 enum RealmZone
@@ -128,6 +128,13 @@ enum RealmZone
 // xinef: petitions storage
 struct PetitionData
 {
+};
+
+struct SessionOutcome
+{
+    SessionShutdownType Type = SHUTDOWN_TYPE_UNKNOWN;
+    uint8 ExitCode = SHUTDOWN_EXIT_CODE;
+    std::string Reason;
 };
 
 /// The World
@@ -185,8 +192,13 @@ public:
     void ShutdownCancel() override;
     void ShutdownMsg(bool show = false, Player* player = nullptr, std::string const& reason = std::string()) override;
     static uint8 GetExitCode() { return _exitCode; }
-    static void StopNow(uint8 exitcode) { _stopEvent = true; _exitCode = exitcode; }
+    static void StopNow(uint8 exitcode) { _stoppedByStopNow = true; _stopEvent = true; _exitCode = exitcode; }
     static bool IsStopped() { return _stopEvent; }
+
+    /// Records how this session ended in `uptime`; `finished` marks the shutdown as complete (not a crash)
+    void SaveSessionEnd(bool finished) override;
+    [[nodiscard]] Optional<PreviousSessionInfo> const& GetPreviousSessionInfo() const override { return _previousSession; }
+    [[nodiscard]] uint32 GetLifetimeMaxPlayerCount() const override;
 
     void Update(uint32 diff) override;
 
@@ -235,12 +247,15 @@ public:
     [[nodiscard]] uint32 GetCleaningFlags() const override { return _cleaningFlags; }
     void   SetCleaningFlags(uint32 flags) override { _cleaningFlags = flags; }
     void   ResetEventSeasonalQuests(uint16 event_id) override;
+    void   ReloadRBAC() override;
 
     [[nodiscard]] std::string const& GetRealmName() const override { return _realmName; } // pussywizard
     void SetRealmName(std::string name) override { _realmName = name; } // pussywizard
 
 protected:
     void _UpdateGameTime();
+    bool RescheduleShutdownForWintergrasp();
+    void LoadPreviousSessionInfo();
     // callback for UpdateRealmCharacters
     void _UpdateRealmCharCount(PreparedQueryResult resultCharCount,uint32 accountId);
 
@@ -260,10 +275,16 @@ private:
     WorldConfig _worldConfig;
 
     static std::atomic_long _stopEvent;
-    static uint8 _exitCode;
+    static std::atomic<uint8> _exitCode;
+    // Set by StopNow, whose exit code replaces any scheduled shutdown's, so the scheduled details no longer apply
+    static std::atomic<bool> _stoppedByStopNow;
     uint32 _shutdownTimer;
     uint32 _shutdownMask;
     std::string _shutdownReason;
+
+    Optional<PreviousSessionInfo> _previousSession;
+    uint32 _lifetimeMaxPlayerCount;
+    Optional<SessionOutcome> _sessionOutcome;
 
     uint32 _cleaningFlags;
 

@@ -46,7 +46,6 @@ enum Spells
 
 enum Events
 {
-    EVENT_TALK_CHECK                = 1,
     EVENT_ENRAGE                    = 2
 };
 
@@ -57,7 +56,7 @@ enum Misc
 
 struct boss_najentus : public BossAI
 {
-    boss_najentus(Creature* creature) : BossAI(creature, DATA_HIGH_WARLORD_NAJENTUS), _canTalk(true) { }
+    boss_najentus(Creature* creature) : BossAI(creature, DATA_HIGH_WARLORD_NAJENTUS) { }
 
     void Reset() override
     {
@@ -68,8 +67,6 @@ struct boss_najentus : public BossAI
 
     void JustEngagedWith(Unit* who) override
     {
-        _canTalk = true;
-
         BossAI::JustEngagedWith(who);
         Talk(SAY_AGGRO);
         DoCastSelf(SPELL_REMOVE_SPINES);
@@ -91,7 +88,7 @@ struct boss_najentus : public BossAI
 
         ScheduleTimedEvent(21s, [&]
         {
-            if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 0.0f, false, false))
+            if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 0.0f, true, false))
             {
                 DoCast(target, SPELL_IMPALING_SPINE);
                 target->CastSpell(target, SPELL_SUMMON_IMPALING_SPINE, true);
@@ -108,15 +105,7 @@ struct boss_najentus : public BossAI
 
     void KilledUnit(Unit* victim) override
     {
-        if (victim->IsPlayer() && _canTalk)
-        {
-            Talk(SAY_SLAY);
-            _canTalk = false;
-            ScheduleUniqueTimedEvent(5s, [&]
-            {
-                _canTalk = true;
-            }, EVENT_TALK_CHECK);
-        }
+        Talk(SAY_SLAY, victim);
     }
 
     void JustDied(Unit* killer) override
@@ -126,13 +115,18 @@ struct boss_najentus : public BossAI
         Talk(SAY_DEATH);
     }
 
-private:
-    bool _canTalk;
 };
 
 class spell_najentus_needle_spine : public SpellScript
 {
     PrepareSpellScript(spell_najentus_needle_spine);
+
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        // Needle Spine's damage spell (39835) can only target players, and its linked explosion (39968)
+        // fires only when 39835 hits. Thus, the targeting spell (39992) needs to be limited to player targets.
+        targets.remove_if([](WorldObject const* target) { return !target->IsPlayer(); });
+    }
 
     void HandleDummy(SpellEffIndex  /*effIndex*/)
     {
@@ -142,6 +136,8 @@ class spell_najentus_needle_spine : public SpellScript
 
     void Register() override
     {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_najentus_needle_spine::FilterTargets,
+            EFFECT_0, TARGET_UNIT_SRC_AREA_ENEMY);
         OnEffectHitTarget += SpellEffectFn(spell_najentus_needle_spine::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
     }
 };

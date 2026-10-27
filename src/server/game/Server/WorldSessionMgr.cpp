@@ -17,6 +17,7 @@
 
 #include "Chat.h"
 #include "ChatPackets.h"
+#include "RBAC.h"
 #include "GameTime.h"
 #include "Metric.h"
 #include "Player.h"
@@ -37,6 +38,7 @@ WorldSessionMgr::WorldSessionMgr()
     _maxQueuedSessionCount = 0;
     _playerCount = 0;
     _maxPlayerCount = 0;
+    _stalePruneTimer = 0;
 }
 
 WorldSessionMgr::~WorldSessionMgr()
@@ -90,6 +92,34 @@ WorldSession* WorldSessionMgr::FindOfflineSessionForCharacterGUID(ObjectGuid::Lo
 
 void WorldSessionMgr::UpdateSessions(uint32 const diff)
 {
+    _stalePruneTimer += diff;
+    if (_stalePruneTimer >= 10 * MINUTE * IN_MILLISECONDS)
+    {
+        _stalePruneTimer = 0;
+        Seconds const now = GameTime::GetGameTime();
+
+        // Drop play-history entries past the reset window so the map stays bounded even for
+        // accounts that disconnect and never reconnect (login only erases their own entry).
+        for (auto itr = _accountsPlayHistory.begin(); itr != _accountsPlayHistory.end();)
+        {
+            if ((now - itr->second.logoutTime) >= PLAY_TIME_LIMIT_FULL)
+                itr = _accountsPlayHistory.erase(itr);
+            else
+                ++itr;
+        }
+
+        // Drop disconnect entries past the tolerance window so the map stays bounded on realms that never
+        // reach PlayerLimit (HasRecentlyDisconnected only prunes _disconnects while the queue is active).
+        time_t const tolerance = sWorld->getIntConfig(CONFIG_INTERVAL_DISCONNECT_TOLERANCE);
+        for (auto itr = _disconnects.begin(); itr != _disconnects.end();)
+        {
+            if ((now.count() - itr->second) >= tolerance)
+                itr = _disconnects.erase(itr);
+            else
+                ++itr;
+        }
+    }
+
     {
         METRIC_DETAILED_NO_THRESHOLD_TIMER("world_update_time",
             METRIC_TAG("type", "Add sessions"),
@@ -116,8 +146,19 @@ void WorldSessionMgr::UpdateSessions(uint32 const diff)
         // pussywizard:
         if (pSession->HandleSocketClosed())
         {
+            Seconds const now = GameTime::GetGameTime();
+
+            if (pSession->IsAffectedByCAIS())
+            {
+                // a reconnect builds a fresh session and carries time from _accountsPlayHistory, so persist it
+                // here at socket-close time rather than during offline cleanup (which runs ~60s later)
+                AccountPlayHistory& history = _accountsPlayHistory[pSession->GetAccountId()];
+                history.playedTime = pSession->GetConsecutivePlayTime(now);
+                history.logoutTime = now;
+            }
+
             if (!RemoveQueuedPlayer(pSession) && sWorld->getIntConfig(CONFIG_INTERVAL_DISCONNECT_TOLERANCE))
-                _disconnects[pSession->GetAccountId()] = GameTime::GetGameTime().count();
+                _disconnects[pSession->GetAccountId()] = now.count();
             _sessions.erase(itr);
             // there should be no offline session if current one is logged onto a character
             SessionMap::iterator iter;
@@ -127,7 +168,7 @@ void WorldSessionMgr::UpdateSessions(uint32 const diff)
                 _offlineSessions.erase(iter);
                 delete tmp;
             }
-            pSession->SetOfflineTime(GameTime::GetGameTime().count());
+            pSession->SetOfflineTime(now.count());
             _offlineSessions[pSession->GetAccountId()] = pSession;
             continue;
         }
@@ -137,8 +178,17 @@ void WorldSessionMgr::UpdateSessions(uint32 const diff)
 
         if (!pSession->Update(diff, updater))
         {
+            Seconds const now = GameTime::GetGameTime();
+
+            if (pSession->IsAffectedByCAIS())
+            {
+                AccountPlayHistory& history = _accountsPlayHistory[pSession->GetAccountId()];
+                history.playedTime = pSession->GetConsecutivePlayTime(now);
+                history.logoutTime = now;
+            }
+
             if (!RemoveQueuedPlayer(pSession) && sWorld->getIntConfig(CONFIG_INTERVAL_DISCONNECT_TOLERANCE))
-                _disconnects[pSession->GetAccountId()] = GameTime::GetGameTime().count();
+                _disconnects[pSession->GetAccountId()] = now.count();
             _sessions.erase(itr);
             delete pSession;
         }
@@ -153,7 +203,11 @@ void WorldSessionMgr::UpdateSessions(uint32 const diff)
         next = itr;
         ++next;
         WorldSession* pSession = itr->second;
-        if (!pSession->GetPlayer() || pSession->GetOfflineTime() + 60 < currTime || pSession->IsKicked())
+        // A session with a logout already running leaves when that countdown ends, so closing the client early
+        // with EXIT NOW doesn't shorten it. A client crash (or sudden ALT+F4) waits out the full interval so a
+        // dropped connection can be reclaimed.
+        if (!pSession->GetPlayer() || pSession->IsKicked() || pSession->ShouldLogOut(currTime) ||
+            pSession->GetOfflineTime() + sWorld->getIntConfig(CONFIG_INTERVAL_DISCONNECT_TOLERANCE) < currTime)
         {
             _offlineSessions.erase(itr);
             delete pSession;
@@ -295,6 +349,9 @@ void WorldSessionMgr::AddSession_(WorldSession* session)
         if (!RemoveQueuedPlayer(oldSession) && sWorld->getIntConfig(CONFIG_INTERVAL_DISCONNECT_TOLERANCE))
             _disconnects[session->GetAccountId()] = GameTime::GetGameTime().count();
 
+        // don't allow resetting consecutive play time on double login to same account
+        session->SetPreviousPlayedTime(old->second->GetConsecutivePlayTime(GameTime::GetGameTime()));
+
         // pussywizard:
         if (oldSession->HandleSocketClosed())
         {
@@ -310,8 +367,19 @@ void WorldSessionMgr::AddSession_(WorldSession* session)
             _offlineSessions[oldSession->GetAccountId()] = oldSession;
         }
         else
-        {
             delete oldSession;
+    }
+    else
+    {
+        auto itr = _accountsPlayHistory.find(session->GetAccountId());
+        if (itr != _accountsPlayHistory.end())
+        {
+            // carry consecutive play time only if the offline gap was under the reset window
+            if ((GameTime::GetGameTime() - itr->second.logoutTime) < PLAY_TIME_LIMIT_FULL)
+                session->SetPreviousPlayedTime(itr->second.playedTime);
+
+            // entry consumed on login; erase so _accountsPlayHistory cannot grow unbounded
+            _accountsPlayHistory.erase(itr);
         }
     }
 
@@ -323,7 +391,12 @@ void WorldSessionMgr::AddSession_(WorldSession* session)
     // don't count this session when checking player limit
     --Sessions;
 
-    if (pLimit > 0 && Sessions >= pLimit && AccountMgr::IsPlayerAccount(session->GetSecurity()) && !session->CanSkipQueue() && !HasRecentlyDisconnected(session))
+    // Trial accounts do not get account-flag queue priority. RBAC_PERM_SKIP_QUEUE is still honored
+    // since it can be granted intentionally to specific accounts.
+    bool trialQueueRestricted = sWorld->getBoolConfig(CONFIG_TRIAL_RESTRICTION_QUEUE) && session->IsTrialAccount();
+    bool canSkipQueue = session->HasPermission(rbac::RBAC_PERM_SKIP_QUEUE) || (!trialQueueRestricted && session->CanSkipQueue());
+
+    if (pLimit > 0 && Sessions >= pLimit && !canSkipQueue && !HasRecentlyDisconnected(session))
     {
         AddQueuedPlayer(session);
         UpdateMaxSessionCounters();
@@ -390,7 +463,7 @@ void WorldSessionMgr::SendGlobalGMMessage(WorldPacket const* packet, WorldSessio
             itr->second->GetPlayer() &&
             itr->second->GetPlayer()->IsInWorld() &&
             itr->second != self &&
-            !AccountMgr::IsPlayerAccount(itr->second->GetSecurity()) &&
+            itr->second->HasPermission(rbac::RBAC_PERM_RECEIVE_GLOBAL_GM_TEXTMESSAGE) &&
             (teamId == TEAM_NEUTRAL || itr->second->GetPlayer()->GetTeamId() == teamId))
         {
             itr->second->SendPacket(packet);

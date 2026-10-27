@@ -16,6 +16,7 @@
  */
 
 #include "CreatureScript.h"
+#include "ObjectAccessor.h"
 #include "ScriptedCreature.h"
 #include "SpellScriptLoader.h"
 #include "black_temple.h"
@@ -98,8 +99,8 @@ struct boss_shade_of_akama : public BossAI
 {
     boss_shade_of_akama(Creature* creature) : BossAI(creature, DATA_SHADE_OF_AKAMA) { }
 
-    std::list<Creature*> channelers;
-    std::list<Creature*> generators;
+    GuidVector channelers;
+    GuidVector generators;
 
     void Reset() override
     {
@@ -114,11 +115,13 @@ struct boss_shade_of_akama : public BossAI
 
     void EnterEvadeMode(EvadeReason why) override
     {
-        for (Creature* generator : generators)
-            generator->AI()->DoAction(ACTION_GENERATOR_DESPAWN_ALL);
+        for (ObjectGuid const& generatorGuid : generators)
+            if (Creature* generator = ObjectAccessor::GetCreature(*me, generatorGuid))
+                generator->AI()->DoAction(ACTION_GENERATOR_DESPAWN_ALL);
 
-        for (Creature* channeler : channelers)
-            channeler->SetUnitFlag(UNIT_FLAG_NOT_SELECTABLE);
+        for (ObjectGuid const& channelerGuid : channelers)
+            if (Creature* channeler = ObjectAccessor::GetCreature(*me, channelerGuid))
+                channeler->SetUnitFlag(UNIT_FLAG_NOT_SELECTABLE);
 
         BossAI::EnterEvadeMode(why);
     }
@@ -128,8 +131,9 @@ struct boss_shade_of_akama : public BossAI
         BossAI::JustDied(killer);
         me->CastSpell(me, SPELL_SHADE_OF_AKAMA_TRIGGER, true);
 
-        for (Creature* generator : generators)
-            generator->AI()->DoAction(ACTION_GENERATOR_DESPAWN_ALL);
+        for (ObjectGuid const& generatorGuid : generators)
+            if (Creature* generator = ObjectAccessor::GetCreature(*me, generatorGuid))
+                generator->AI()->DoAction(ACTION_GENERATOR_DESPAWN_ALL);
 
         if (Creature* akama = instance->GetCreature(DATA_AKAMA_SHADE))
             akama->AI()->DoAction(ACTION_AKAMA_START_OUTRO);
@@ -141,14 +145,22 @@ struct boss_shade_of_akama : public BossAI
         {
             instance->SetBossState(DATA_SHADE_OF_AKAMA, IN_PROGRESS);
 
-            me->GetCreatureListWithEntryInGrid(channelers, NPC_ASHTONGUE_CHANNELER, 40.0f);
-            me->GetCreatureListWithEntryInGrid(generators, NPC_CREATURE_GENERATOR_AKAMA, 100.0f);
+            std::list<Creature*> channelerList;
+            std::list<Creature*> generatorList;
+            me->GetCreatureListWithEntryInGrid(channelerList, NPC_ASHTONGUE_CHANNELER, 40.0f);
+            me->GetCreatureListWithEntryInGrid(generatorList, NPC_CREATURE_GENERATOR_AKAMA, 100.0f);
 
-            for (Creature* channeler : channelers)
+            for (Creature* channeler : channelerList)
+            {
+                channelers.push_back(channeler->GetGUID());
                 channeler->RemoveUnitFlag(UNIT_FLAG_NOT_SELECTABLE);
+            }
 
-            for (Creature* generator : generators)
+            for (Creature* generator : generatorList)
+            {
+                generators.push_back(generator->GetGUID());
                 generator->AI()->DoAction(ACTION_GENERATOR_START);
+            }
 
             ScheduleTimedEvent(1200ms, [&]
             {
@@ -169,8 +181,9 @@ struct boss_shade_of_akama : public BossAI
             me->RemoveAurasDueToSpell(SPELL_AKAMA_SOUL_CHANNEL);
             scheduler.CancelAll();
 
-            for (Creature* generator : generators)
-                generator->AI()->DoAction(ACTION_GENERATOR_STOP);
+            for (ObjectGuid const& generatorGuid : generators)
+                if (Creature* generator = ObjectAccessor::GetCreature(*me, generatorGuid))
+                    generator->AI()->DoAction(ACTION_GENERATOR_STOP);
 
             if (Creature* akama = instance->GetCreature(DATA_AKAMA_SHADE))
             {
@@ -179,6 +192,7 @@ struct boss_shade_of_akama : public BossAI
                 DoCast(akama, SPELL_THREAT, true);
                 me->AddThreat(akama, 900000.0f);
                 akama->AI()->DoCast(me, SPELL_FIXATE, true);
+                akama->AI()->AttackStart(me);
                 AttackStart(akama);
             }
 
@@ -222,7 +236,6 @@ struct npc_akama_shade : public ScriptedAI
         _sayLowHealth = false;
         _died = false;
         scheduler.CancelAll();
-        _generators.clear();
     }
 
     void MovementInform(uint32 type, uint32 point) override
@@ -272,16 +285,13 @@ struct npc_akama_shade : public ScriptedAI
 
     void DamageTaken(Unit* /*unit*/, uint32& damage, DamageEffectType, SpellSchoolMask) override
     {
-        if (me->HealthBelowPctDamaged(20, damage) && !_sayLowHealth)
-        {
-            _sayLowHealth = true;
-            Talk(SAY_LOW_HEALTH);
-        }
-        else if (damage >= me->GetHealth() && !_died)
+        // before the 20% yell, or a lethal hit crossing 20% skips the reset
+        if (damage >= me->GetHealth() && !_died)
         {
             _died = true;
-            me->GetCreatureListWithEntryInGrid(_generators, NPC_CREATURE_GENERATOR_AKAMA, 100.0f);
-            for (Creature* generator : _generators)
+            std::list<Creature*> generators;
+            me->GetCreatureListWithEntryInGrid(generators, NPC_CREATURE_GENERATOR_AKAMA, 100.0f);
+            for (Creature* generator : generators)
                 generator->AI()->DoAction(ACTION_GENERATOR_DESPAWN_ALL);
 
             damage = me->GetHealth() - 1;
@@ -295,6 +305,20 @@ struct npc_akama_shade : public ScriptedAI
             me->DespawnOrUnsummon();
             ScriptedAI::EnterEvadeMode(EvadeReason::EVADE_REASON_OTHER);
         }
+        else if (me->HealthBelowPctDamaged(20, damage) && !_sayLowHealth)
+        {
+            _sayLowHealth = true;
+            Talk(SAY_LOW_HEALTH);
+        }
+    }
+
+    // direct Unit::Kill calls (e.g. .die) never reach DamageTaken
+    void JustDied(Unit* /*killer*/) override
+    {
+        Talk(SAY_DEATH);
+        if (Creature* shade = instance->GetCreature(DATA_SHADE_OF_AKAMA))
+            if (shade->IsAlive())
+                shade->AI()->EnterEvadeMode();
     }
 
     void DoAction(int32 param) override
@@ -347,7 +371,6 @@ struct npc_akama_shade : public ScriptedAI
     private:
         bool _sayLowHealth;
         bool _died;
-        std::list<Creature *> _generators;
 };
 
 struct npc_creature_generator_akama : public ScriptedAI

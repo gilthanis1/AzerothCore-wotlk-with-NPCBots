@@ -257,6 +257,12 @@ void DynamicObject::RemoveCasterViewpoint()
     }
 }
 
+uint32 DynamicObject::GetFaction() const
+{
+    ASSERT(_caster);
+    return _caster->GetFaction();
+}
+
 void DynamicObject::BindToCaster()
 {
     ASSERT(!_caster);
@@ -271,4 +277,12 @@ void DynamicObject::UnbindFromCaster()
     ASSERT(_caster);
     _caster->_UnregisterDynObject(this);
     _caster = nullptr;
+}
+
+bool DynamicObject::IsUpdateNeeded()
+{
+    if (GetByteValue(DYNAMICOBJECT_BYTES, 0) == DYNAMIC_OBJECT_AREA_SPELL)
+        return true;
+
+    return WorldObject::IsUpdateNeeded();
 }

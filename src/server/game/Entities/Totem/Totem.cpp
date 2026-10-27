@@ -45,7 +45,7 @@ void Totem::Update(uint32 time)
 
     if (botOwner)
     {
-        if (!botOwner->IsAlive() || !IsAlive() || m_duration <= time)
+        if (!IsAlive() || m_duration <= time || (!botOwner->IsAlive() && !(m_Properties && m_Properties->Type == SUMMON_TYPE_LIGHTWELL)))
         {
             UnSummon();
             return;
@@ -53,9 +53,16 @@ void Totem::Update(uint32 time)
     }
     else
     //end npcbot
-    if (!owner || !owner->IsAlive() || !IsAlive() || m_duration <= time)
+    if (!owner || !IsAlive() || m_duration <= time)
     {
         UnSummon();                                         // remove self
+        return;
+    }
+
+    // If owner is dead and this is not a lightwell, despawn
+    if (!owner->IsAlive() && !(m_Properties && m_Properties->Type == SUMMON_TYPE_LIGHTWELL))
+    {
+        UnSummon();
         return;
     }
 
@@ -199,7 +206,7 @@ void Totem::UnSummon(Milliseconds msTime)
     AddObjectToRemoveList();
 }
 
-bool Totem::IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index) const
+bool Totem::IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index, WorldObject const* caster /*= nullptr*/) const
 {
     // xinef: immune to all positive spells, except of stoneclaw totem absorb, sentry totem bind sight and intervene
     // totems positive spells have unit_caster target
@@ -208,6 +215,10 @@ bool Totem::IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index) con
             spellInfo->IsPositive() && spellInfo->Effects[index].TargetA.GetTarget() != TARGET_UNIT_CASTER &&
             spellInfo->Effects[index].TargetA.GetCheckType() != TARGET_CHECK_ENTRY &&
             spellInfo->Id != SPELL_STONECLAW && spellInfo->Id != SPELL_BIND_SIGHT && spellInfo->Id != SPELL_INTERVENE)
+        return true;
+
+    if (spellInfo->Effects[index].Effect == SPELL_EFFECT_ATTACK_ME ||
+            spellInfo->Effects[index].ApplyAuraName == SPELL_AURA_MOD_TAUNT)
         return true;
 
     // Cyclone shouldn't be casted on totems
@@ -229,5 +240,5 @@ bool Totem::IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index) con
             break;
     }
 
-    return Creature::IsImmunedToSpellEffect(spellInfo, index);
+    return Creature::IsImmunedToSpellEffect(spellInfo, index, caster);
 }

@@ -26,6 +26,10 @@
 #include "SpellScriptLoader.h"
 #include "zulaman.h"
 
+//npcbot
+#include "GridNotifiers.h"
+//end npcbot
+
 /*######
 ## npc_forest_frog
 ######*/
@@ -240,10 +244,13 @@ struct npc_forest_frog : public ScriptedAI
 ## npc_zulaman_hostage
 ######*/
 
-#define GOSSIP_HOSTAGE1        "I am glad to help you."
+enum ZulAmanHostage
+{
+    GOSSIP_OPTION_HOSTAGE_FREE = 0
+};
 
-static uint32 HostageEntry[] = {23790, 23999, 24024, 24001};
-static uint32 ChestEntry[] = {186648, 187021, 186667, 186672};
+static uint32 HostageEntry[] = {23999, 23790, 24024, 24001};
+static uint32 ChestEntry[] = {187021, 186648, 186667, 186672};
 
 class npc_zulaman_hostage : public CreatureScript
 {
@@ -282,7 +289,8 @@ public:
 
     bool OnGossipHello(Player* player, Creature* creature) override
     {
-        AddGossipItemFor(player, GOSSIP_ICON_CHAT, GOSSIP_HOSTAGE1, GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF + 1);
+        uint32 const menuId = creature->GetCreatureTemplate()->GossipMenuId;
+        AddGossipItemFor(player, menuId, GOSSIP_OPTION_HOSTAGE_FREE, GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF + 1);
         SendGossipMenuFor(player, player->GetGossipTextId(creature), creature->GetGUID());
         return true;
     }
@@ -299,7 +307,8 @@ public:
 
         creature->RemoveNpcFlag(UNIT_NPC_FLAG_GOSSIP);
 
-        creature->GetInstanceScript()->SetData(DATA_CHEST_LOOTED, 0);
+        if (InstanceScript* instance = creature->GetInstanceScript())
+            instance->SetData(DATA_CHEST_LOOTED, 0);
 
         float x, y, z;
         creature->GetPosition(x, y, z);
@@ -905,6 +914,24 @@ class spell_call_of_the_beast : public SpellScript
     }
 };
 
+//npcbot
+// 43360 - Fixate (spell_dbc)
+class spell_fixate : public SpellScript
+{
+    PrepareSpellScript(spell_fixate);
+
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        targets.remove_if(Acore::RaidCheck(GetCaster(), true));
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_fixate::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENTRY);
+    }
+};
+//end npcbot
+
 void AddSC_zulaman()
 {
     RegisterZulAmanCreatureAI(npc_forest_frog);
@@ -918,4 +945,8 @@ void AddSC_zulaman()
     RegisterSpellScript(spell_alert_drums);
     RegisterSpellScript(spell_summon_amanishi_sentries);
     RegisterSpellScript(spell_call_of_the_beast);
+
+    //npcbot
+    RegisterSpellScript(spell_fixate);
+    //end npcbot
 }

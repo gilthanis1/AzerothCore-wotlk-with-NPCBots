@@ -235,7 +235,7 @@ public:
 
             std::list<Unit*> targets;
             GetNearbyFriendlyTargetsList(targets, 40);
-            targets.remove_if(BOTAI_PRED::DrainTargetExclude());
+            std::erase_if(targets, BOTAI_PRED::DrainTargetExclude());
 
             if (targets.empty())
                 return;
@@ -409,6 +409,9 @@ public:
 
         void SpellHit(Unit* wcaster, SpellInfo const* spell) override
         {
+            if (!wcaster)
+                return;
+
             Unit* caster = wcaster->ToUnit();
             if (!caster)
                 return;

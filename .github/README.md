@@ -40,7 +40,9 @@ Please take the time to review existing issues before submitting your own to
 prevent duplicates.
 
 
-## Submitting fixes
+Agent instructions for this repo live in [AGENTS.md](../AGENTS.md), with task-scoped guides in [.agents/docs/](../.agents/docs/); [.agents/README.md](../.agents/README.md) explains how to hook up your agent.
+
+Click on the "⭐ Star" button to help us gain more visibility on GitHub!
 
 C++ fixes are submitted as [pull requests](https://github.com/trickerer/Azerothcore-wotlk-with-NPCBots/pulls).
 

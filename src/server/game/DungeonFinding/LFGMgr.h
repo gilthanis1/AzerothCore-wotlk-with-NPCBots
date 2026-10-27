@@ -20,6 +20,7 @@
 
 #include <utility>
 
+#include "ByteBuffer.h"
 #include "DBCStructure.h"
 #include "Field.h"
 #include "LFG.h"
@@ -194,7 +195,7 @@ namespace lfg
         uint32 _agility;
         uint32 _health;
         uint32 _mana;
-        uint32 _defenseSkill;
+        uint32 _defenseRating;
         // --
         uint32 _dodgeRating;
         uint32 _blockRating;
@@ -207,22 +208,22 @@ namespace lfg
                        uint8 _online, uint8 _level, uint8 _class, uint8 _race, float _avgItemLevel,
                        uint8 (&_talents)[3], uint32 _area, uint32 _armor, uint32 _spellDamage, uint32 _spellHeal,
                        uint32 _critRatingMelee, uint32 _critRatingRanged, uint32 _critRatingSpell, float _mp5, float _mp5combat,
-                       uint32 _attackPower, uint32 _agility, uint32 _health, uint32 _mana, uint32 _defenseSkill,
+                       uint32 _attackPower, uint32 _agility, uint32 _health, uint32 _mana, uint32 _defenseRating,
                        uint32 _dodgeRating, uint32 _blockRating, uint32 _parryRating, uint32 _hasteRating, uint32 _expertiseRating)
             : guid(guid), comment(std::move(comment)), isGroupLeader(isGroupLeader), groupGuid(groupGuid), roles(roles), encounterMask(encounterMask), instanceGuid(instanceGuid),
               _online(_online), _level(_level), _class(_class), _race(_race), _avgItemLevel(_avgItemLevel),
               _talents0(_talents[0]), _talents1(_talents[1]), _talents2(_talents[2]), _area(_area), _armor(_armor), _spellDamage(_spellDamage), _spellHeal(_spellHeal),
               _critRatingMelee(_critRatingMelee), _critRatingRanged(_critRatingRanged), _critRatingSpell(_critRatingSpell), _mp5(_mp5), _mp5combat(_mp5combat),
-              _attackPower(_attackPower), _agility(_agility), _health(_health), _mana(_mana), _defenseSkill(_defenseSkill),
+              _attackPower(_attackPower), _agility(_agility), _health(_health), _mana(_mana), _defenseRating(_defenseRating),
               _dodgeRating(_dodgeRating), _blockRating(_blockRating), _parryRating(_parryRating), _hasteRating(_hasteRating), _expertiseRating(_expertiseRating)
         {}
         [[nodiscard]] bool PlayerSameAs(RBInternalInfo const& i) const
         {
             return isGroupLeader == i.isGroupLeader && groupGuid == i.groupGuid && roles == i.roles && (isGroupLeader || (comment == i.comment && encounterMask == i.encounterMask && instanceGuid == i.instanceGuid))
-                   && _online == i._online && _level == i._level && _class == i._class && _race == i._race && std::fabs(_avgItemLevel - i._avgItemLevel) < 0.01f
+                   && _level == i._level && _class == i._class && _race == i._race && std::fabs(_avgItemLevel - i._avgItemLevel) < 0.01f
                    && _talents0 == i._talents0 && _talents1 == i._talents1 && _talents2 == i._talents2 && _area == i._area && _armor == i._armor && _spellDamage == i._spellDamage && _spellHeal == i._spellHeal
                    && _critRatingMelee == i._critRatingMelee && _critRatingRanged == i._critRatingRanged && _critRatingSpell == i._critRatingSpell && std::fabs(_mp5 - i._mp5) < 0.01f && std::fabs(_mp5combat - i._mp5combat) < 0.01f
-                   && _attackPower == i._attackPower && _agility == i._agility && _health == i._health && _mana == i._mana && _defenseSkill == i._defenseSkill
+                   && _attackPower == i._attackPower && _agility == i._agility && _health == i._health && _mana == i._mana && _defenseRating == i._defenseRating
                    && _dodgeRating == i._dodgeRating && _blockRating == i._blockRating && _parryRating == i._parryRating && _hasteRating == i._hasteRating && _expertiseRating == i._expertiseRating;
         }
         void CopyStats(RBInternalInfo const& i)
@@ -244,7 +245,7 @@ namespace lfg
             _agility = i._agility;
             _health = i._health;
             _mana = i._mana;
-            _defenseSkill = i._defenseSkill;
+            _defenseRating = i._defenseRating;
             _dodgeRating = i._dodgeRating;
             _blockRating = i._blockRating;
             _parryRating = i._parryRating;
@@ -445,11 +446,15 @@ namespace lfg
 
         // World.cpp
         /// Finish the dungeon for the given group. All check are performed using internal lfg data
-        void FinishDungeon(ObjectGuid gguid, uint32 dungeonId, const Map* currMap);
+        void FinishDungeon(ObjectGuid gguid, uint32 dungeonId, Map const* currMap);
         /// Loads rewards for random dungeons
         void LoadRewards();
         /// Loads dungeons from dbc and adds teleport coords
         void LoadLFGDungeons(bool reload = false);
+        /// Filters out recently completed dungeons from the proposal set for the given players
+        LfgDungeonSet FilterCooldownDungeons(LfgDungeonSet const& dungeons, LfgRolesMap const& players);
+        /// Clears all dungeon cooldowns for all players
+        void ClearDungeonCooldowns();
 
         // Multiple files
         /// Check if given guid applied for random dungeon
@@ -556,10 +561,10 @@ namespace lfg
         void UpdateRaidBrowser(uint32 diff);
         void LfrSetComment(Player* p, std::string comment);
         void SendRaidBrowserJoinedPacket(Player* p, LfgDungeonSet& dungeons, std::string comment);
-        void RBPacketAppendGroup(const RBInternalInfo& info, ByteBuffer& buffer);
-        void RBPacketAppendPlayer(const RBInternalInfo& info, ByteBuffer& buffer);
-        void RBPacketBuildDifference(WorldPacket& differencePacket, uint32 dungeonId, uint32 deletedCounter, ByteBuffer& buffer_deleted, uint32 groupCounter, ByteBuffer& buffer_groups, uint32 playerCounter, ByteBuffer& buffer_players);
-        void RBPacketBuildFull(WorldPacket& fullPacket, uint32 dungeonId, RBInternalInfoMap& infoMap);
+        void RBPacketAppendGroup(RBInternalInfo const& info, ByteBuffer& buffer);
+        void RBPacketAppendPlayer(RBInternalInfo const& info, ByteBuffer& buffer);
+        void RBPacketBuildDifference(WorldPacket& differencePacket, uint32 dungeonId, uint32 deletedCounter, ByteBuffer const& bufferDeleted, uint32 groupCounter, ByteBuffer const& bufferGroups, uint32 playerCounter, ByteBuffer const& bufferPlayers);
+        void RBPacketBuildFull(WorldPacket& fullPacket, uint32 dungeonId, RBInternalInfoMap const& infoMap);
 
         // LfgQueue
         /// Get last lfg state (NONE, DUNGEON or FINISHED_DUNGEON)
@@ -584,6 +589,7 @@ namespace lfg
         [[nodiscard]] bool IsTesting() const { return m_Testing; }
 
         void SetDungeon(ObjectGuid guid, uint32 dungeon);
+        LFGDungeonData const* GetLFGDungeon(uint32 id);
 
     private:
         TeamId GetTeam(ObjectGuid guid);
@@ -596,7 +602,6 @@ namespace lfg
         void SetCanOverrideRBState(ObjectGuid guid, bool val);
         void GetCompatibleDungeons(LfgDungeonSet& dungeons, LfgGuidSet const& players, LfgLockPartyMap& lockMap, uint32 randomDungeonId = 0);
         void _SaveToDB(ObjectGuid guid);
-        LFGDungeonData const* GetLFGDungeon(uint32 id);
 
         // Proposals
         void RemoveProposal(LfgProposalContainer::iterator itProposal, LfgUpdateType type);
@@ -623,6 +628,12 @@ namespace lfg
         uint32 lastProposalId;                             ///< pussywizard, store it here because of splitting LFGMgr update into tasks
         uint32 m_raidBrowserUpdateTimer[2];                ///< pussywizard
         uint32 m_raidBrowserLastUpdatedDungeonId[2];       ///< pussywizard: for 2 factions
+        ByteBuffer _rbBufferDeleted;
+        ByteBuffer _rbBufferGroups;
+        ByteBuffer _rbBufferPlayers;
+        GuidSet _rbPrevGroups;
+        GuidSet _rbDroppedGroups;
+        RBInternalInfoMap _rbCopy;
 
         LfgQueueContainer QueuesStore;                     ///< Queues
         LfgCachedDungeonContainer CachedDungeonMapStore;   ///< Stores all dungeons by groupType
@@ -636,6 +647,14 @@ namespace lfg
         LfgPlayerDataContainer PlayersStore;               ///< Player data
         LfgGroupDataContainer GroupsStore;                 ///< Group data
         bool m_Testing;
+
+        // Dungeon cooldown system - prevents same dungeon being assigned in a row
+        typedef std::unordered_map<uint32 /*dungeonId*/, TimePoint /*completionTime*/> LfgDungeonCooldownMap;
+        typedef std::unordered_map<ObjectGuid /*playerGuid*/, LfgDungeonCooldownMap> LfgDungeonCooldownContainer;
+        LfgDungeonCooldownContainer DungeonCooldownStore;  ///< Stores dungeon cooldowns per player
+        void AddDungeonCooldown(ObjectGuid guid, uint32 dungeonId);
+        void CleanupDungeonCooldowns();
+        [[nodiscard]] Seconds GetDungeonCooldownDuration() const;
     };
 
     template <typename T, FMT_ENABLE_IF(std::is_enum_v<T>)>

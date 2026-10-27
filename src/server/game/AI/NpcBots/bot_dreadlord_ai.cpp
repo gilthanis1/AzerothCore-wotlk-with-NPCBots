@@ -99,7 +99,6 @@ public:
             private:
                 Creature const* _bot;
                 Position const* _pos;
-                DelayedPetSpawnEvent(DelayedPetSpawnEvent const&);
         };
 
     public:
@@ -341,6 +340,9 @@ public:
 
         void SpellHit(Unit* wcaster, SpellInfo const* spell) override
         {
+            if (!wcaster)
+                return;
+
             Unit* caster = wcaster->ToUnit();
             if (!caster)
                 return;
@@ -372,18 +374,16 @@ public:
         {
             if (damage)
             {
-                BotSpellMap const& spells = GetSpellMap();
-                for (BotSpellMap::const_iterator itr = spells.begin(); itr != spells.end(); ++itr)
+                for (auto& [rank1_id, spell] : GetSpellMap())
                 {
                     //not affected if pet is alive
-                    if (botPet && itr->first == INFERNO_1)
+                    if (botPet && rank1_id == INFERNO_1)
                         continue;
 
-                    uint32& cooldown = itr->second->cooldown;
-                    if (!cooldown)
+                    if (!spell.cooldown)
                         continue;
 
-                    cooldown = cooldown > DAMAGE_CD_REDUCTION ? cooldown - DAMAGE_CD_REDUCTION : 0;
+                    spell.cooldown = spell.cooldown > DAMAGE_CD_REDUCTION ? spell.cooldown - DAMAGE_CD_REDUCTION : 0;
                 }
             }
 

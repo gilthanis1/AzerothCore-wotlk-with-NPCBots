@@ -34,8 +34,8 @@
 
 //npcbot
 #include "bot_ai.h"
+#include "botconfig.h"
 #include "botdatamgr.h"
-#include "botmgr.h"
 //end npcbot
 
 void WorldSession::HandleClientCastFlags(WorldPacket& recvPacket, uint8 castFlags, SpellCastTargets& targets)
@@ -217,13 +217,6 @@ void WorldSession::HandleOpenItemOpcode(WorldPacket& recvPacket)
     if (pUser->m_mover != pUser)
         return;
 
-    // xinef: additional check, client outputs message on its own
-    if (!pUser->IsAlive())
-    {
-        pUser->SendEquipError(EQUIP_ERR_YOU_ARE_DEAD, nullptr, nullptr);
-        return;
-    }
-
     uint8 bagIndex, slot;
 
     recvPacket >> bagIndex >> slot;
@@ -234,6 +227,15 @@ void WorldSession::HandleOpenItemOpcode(WorldPacket& recvPacket)
     if (!item)
     {
         pUser->SendEquipError(EQUIP_ERR_ITEM_NOT_FOUND, nullptr, nullptr);
+        return;
+    }
+
+    // The client locks the item when it sends CMSG_OPEN_ITEM and only unlocks it on a loot
+    // response for that item's guid, so a plain equip error would leave it grayed out until /reload.
+    if (!pUser->IsAlive())
+    {
+        pUser->SendEquipError(EQUIP_ERR_YOU_ARE_DEAD, item, nullptr);
+        pUser->SendLootRelease(item->GetGUID());
         return;
     }
 
@@ -339,6 +341,10 @@ void WorldSession::HandleGameObjectUseOpcode(WorldPacket& recvData)
 
     if (GameObject* obj = GetPlayer()->GetMap()->GetGameObject(guid))
     {
+        // despawned objects cannot be used (they are still visible and clickable for gamemasters)
+        if (!obj->isSpawned())
+            return;
+
         if (!obj->IsWithinDistInMap(GetPlayer(), obj->GetInteractionDistance()))
             return;
 
@@ -364,6 +370,10 @@ void WorldSession::HandleGameobjectReportUse(WorldPacket& recvPacket)
 
     GameObject* go = GetPlayer()->GetMap()->GetGameObject(guid);
     if (!go)
+        return;
+
+    // despawned objects cannot be used (they are still visible and clickable for gamemasters)
+    if (!go->isSpawned())
         return;
 
     // Prevent use of GameObject if it is not selectable. Fixes hack.
@@ -483,7 +493,7 @@ void WorldSession::HandleCastSpellOpcode(WorldPacket& recvPacket)
         // pussywizard: casting player's spells from vehicle when seat allows it
         // if ANYTHING CHANGES in this function, INFORM ME BEFORE applying!!!
         if (Vehicle* veh = mover->GetVehicleKit())
-            if (const VehicleSeatEntry* seat = veh->GetSeatForPassenger(_player))
+            if (VehicleSeatEntry const* seat = veh->GetSeatForPassenger(_player))
                 if (seat->m_flags & VEHICLE_SEAT_FLAG_CAN_ATTACK || spellInfo->Effects[EFFECT_0].Effect == SPELL_EFFECT_OPEN_LOCK /*allow looting from vehicle, but only if player has required spell (all necessary opening spells are in playercreateinfo_spell)*/)
                     if ((mover->IsCreature() && !mover->ToCreature()->HasSpell(spellId)) || spellInfo->IsPassive()) // the creature can't cast that spell, check player instead
                     {
@@ -536,14 +546,16 @@ void WorldSession::HandleCastSpellOpcode(WorldPacket& recvPacket)
     }
 
     // auto-selection buff level base at target level (in spellInfo)
-    if (targets.GetUnitTarget())
-    {
-        SpellInfo const* actualSpellInfo = spellInfo->GetAuraRankForLevel(targets.GetUnitTarget()->GetLevel());
+    if (spellInfo->IsPositive())
+        if (Unit* target = targets.GetUnitTarget())
+            if (mover->IsFriendlyTo(target))
+            {
+                SpellInfo const* actualSpellInfo = spellInfo->GetAuraRankForLevel(target->GetLevel());
 
-        // if rank not found then function return nullptr but in explicit cast case original spell can be casted and later failed with appropriate error message
-        if (actualSpellInfo)
-            spellInfo = actualSpellInfo;
-    }
+                // if rank not found then function return nullptr but in explicit cast case original spell can be casted and later failed with appropriate error message
+                if (actualSpellInfo)
+                    spellInfo = actualSpellInfo;
+            }
 
     Spell* spell = new Spell(mover, spellInfo, triggerFlag, ObjectGuid::Empty, false);
 
@@ -826,8 +838,8 @@ void WorldSession::HandleMirrorImageDataRequest(WorldPacket& recvData)
                 uint8 slot = botItemSlots[i];
                 //Items not displayed on bot: tabard, head, back
                 if (slot == 0 ||
-                    (slot == BOT_SLOT_HEAD && BotMgr::ShowEquippedHelm() == false) ||
-                    (slot == BOT_SLOT_BACK && BotMgr::ShowEquippedCloak() == false))
+                    (slot == BOT_SLOT_HEAD && BotCfg::ShowEquippedHelm() == false) ||
+                    (slot == BOT_SLOT_BACK && BotCfg::ShowEquippedCloak() == false))
                 {
                     data << uint32(0);
                     continue;
